@@ -2,7 +2,7 @@ package org.javers.core;
 
 import com.google.gson.GsonBuilder;
 import com.google.gson.TypeAdapter;
-
+import jakarta.annotation.Nonnull;
 import org.javers.common.date.DateProvider;
 import org.javers.common.date.DefaultDateProvider;
 import org.javers.common.exception.JaversException;
@@ -16,10 +16,18 @@ import org.javers.core.diff.Diff;
 import org.javers.core.diff.DiffFactoryModule;
 import org.javers.core.diff.ListCompareAlgorithm;
 import org.javers.core.diff.appenders.DiffAppendersModule;
-import org.javers.core.diff.changetype.*;
+import org.javers.core.diff.changetype.InitialValueChange;
+import org.javers.core.diff.changetype.NewObject;
+import org.javers.core.diff.changetype.ObjectRemoved;
+import org.javers.core.diff.changetype.TerminalValueChange;
+import org.javers.core.diff.changetype.ValueChange;
 import org.javers.core.diff.changetype.container.ListChange;
 import org.javers.core.diff.changetype.container.ValueAdded;
-import org.javers.core.diff.custom.*;
+import org.javers.core.diff.custom.BigDecimalComparatorWithFixedEquals;
+import org.javers.core.diff.custom.CustomBigDecimalComparator;
+import org.javers.core.diff.custom.CustomPropertyComparator;
+import org.javers.core.diff.custom.CustomToNativeAppenderAdapter;
+import org.javers.core.diff.custom.CustomValueComparator;
 import org.javers.core.graph.GraphFactoryModule;
 import org.javers.core.graph.HashCodeObjectHasher;
 import org.javers.core.graph.ObjectAccessHook;
@@ -33,10 +41,30 @@ import org.javers.core.json.JsonTypeAdapter;
 import org.javers.core.json.typeadapter.change.ChangeTypeAdaptersModule;
 import org.javers.core.json.typeadapter.commit.CommitTypeAdaptersModule;
 import org.javers.core.json.typeadapter.commit.DiffTypeDeserializer;
-import org.javers.core.metamodel.annotation.*;
-import org.javers.core.metamodel.clazz.*;
+import org.javers.core.metamodel.annotation.DiffIgnore;
+import org.javers.core.metamodel.annotation.Entity;
+import org.javers.core.metamodel.annotation.TypeName;
+import org.javers.core.metamodel.annotation.Value;
+import org.javers.core.metamodel.annotation.ValueObject;
+import org.javers.core.metamodel.clazz.ClientsClassDefinition;
+import org.javers.core.metamodel.clazz.CustomDefinition;
+import org.javers.core.metamodel.clazz.EntityDefinition;
+import org.javers.core.metamodel.clazz.EntityDefinitionBuilder;
+import org.javers.core.metamodel.clazz.IgnoredTypeDefinition;
+import org.javers.core.metamodel.clazz.ValueDefinition;
+import org.javers.core.metamodel.clazz.ValueObjectDefinition;
+import org.javers.core.metamodel.clazz.ValueObjectDefinitionBuilder;
 import org.javers.core.metamodel.scanner.ScannerModule;
-import org.javers.core.metamodel.type.*;
+import org.javers.core.metamodel.type.CustomType;
+import org.javers.core.metamodel.type.DynamicMappingStrategy;
+import org.javers.core.metamodel.type.EntityType;
+import org.javers.core.metamodel.type.JaversType;
+import org.javers.core.metamodel.type.TypeMapper;
+import org.javers.core.metamodel.type.TypeMapperLazy;
+import org.javers.core.metamodel.type.TypeMapperModule;
+import org.javers.core.metamodel.type.UnknownType;
+import org.javers.core.metamodel.type.ValueObjectType;
+import org.javers.core.metamodel.type.ValueType;
 import org.javers.core.pico.AddOnsModule;
 import org.javers.core.snapshot.SnapshotModule;
 import org.javers.groovysupport.GroovyAddOns;
@@ -53,9 +81,14 @@ import org.javers.shadow.ShadowModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.annotation.Nonnull;
 import java.lang.reflect.Type;
-import java.util.*;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -69,12 +102,12 @@ import static org.javers.common.validation.Validate.argumentsAreNotNull;
 /**
  * Creates a JaVers instance based on your domain model metadata and custom configuration.
  * <br/><br/>
- *
+ * <p>
  * For example, to build a JaVers instance configured with reasonable defaults:
  * <pre>
  * Javers javers = JaversBuilder.javers().build();
  * </pre>
- *
+ * <p>
  * To build a JaVers instance with an Entity type:
  * <pre>
  * Javers javers = JaversBuilder.javers()
@@ -82,8 +115,8 @@ import static org.javers.common.validation.Validate.argumentsAreNotNull;
  *                              .build();
  * </pre>
  *
- * @see <a href="http://javers.org/documentation/domain-configuration/">http://javers.org/documentation/domain-configuration</a>
  * @author bartosz walacik
+ * @see <a href="http://javers.org/documentation/domain-configuration/">http://javers.org/documentation/domain-configuration</a>
  */
 public class JaversBuilder extends AbstractContainerBuilder {
     public static final Logger logger = LoggerFactory.getLogger(JaversBuilder.class);
@@ -143,7 +176,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
         return javers;
     }
 
-    protected Javers assembleJaversInstance(){
+    protected Javers assembleJaversInstance() {
         CoreConfiguration coreConfiguration = configurationBuilder().build();
         addComponent(coreConfiguration);
 
@@ -186,15 +219,15 @@ public class JaversBuilder extends AbstractContainerBuilder {
 
         return getContainerComponent(JaversCore.class);
     }
-    
+
     /**
      * Register a custom {@link ObjectHasher} implementation, which
      * is used to identify Value Objects inside Sets.
-     *
+     * <p>
      * The default implementation compares objects
      * by value using JSON serialization state, see {@link SnapshotObjectHasher}.
      * <br/><br/>
-     *
+     * <p>
      * Alternative implementation &mdash; {@link HashCodeObjectHasher}
      * uses standard Java {@link #hashCode()} to identify Value Objects inside Sets.
      * This approach can be beneficial if you for some reason don't want to map
@@ -203,8 +236,8 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * @see ValueObjectType
      */
     public JaversBuilder registerObjectHasher(Class<? extends ObjectHasher> objectHasherType) {
-    	objectHasherImplementation = objectHasherType;
-    	return this;
+        objectHasherImplementation = objectHasherType;
+        return this;
     }
 
     /**
@@ -220,10 +253,10 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Registers an {@link EntityType}. <br/>
      * Use @Id annotation to mark exactly one Id-property.
      * <br/><br/>
-     *
+     * <p>
      * Optionally, use @Transient or @{@link DiffIgnore} annotations to mark ignored properties.
      * <br/><br/>
-     *
+     * <p>
      * For example, Entities are: Person, Document
      *
      * @see <a href="http://javers.org/documentation/domain-configuration/#entity">http://javers.org/documentation/domain-configuration/#entity</a>
@@ -231,14 +264,14 @@ public class JaversBuilder extends AbstractContainerBuilder {
      */
     public JaversBuilder registerEntity(Class<?> entityClass) {
         argumentIsNotNull(entityClass);
-        return registerEntity( new EntityDefinition(entityClass));
+        return registerEntity(new EntityDefinition(entityClass));
     }
 
     /**
      * Registers a {@link ValueObjectType}. <br/>
      * Optionally, use @Transient or @{@link DiffIgnore} annotations to mark ignored properties.
      * <br/><br/>
-     *
+     * <p>
      * For example, ValueObjects are: Address, Point
      *
      * @see <a href="http://javers.org/documentation/domain-configuration/#value-object">http://javers.org/documentation/domain-configuration/#value-object</a>
@@ -254,7 +287,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Registers an {@link EntityType}. <br/>
      * Use this method if you are not willing to use {@link Entity} annotation.
      * <br/><br/>
-     *
+     * <p>
      * Recommended way to create {@link EntityDefinition} is {@link EntityDefinitionBuilder},
      * for example:
      * <pre>
@@ -265,7 +298,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      *     .withIgnoredProperties("notImportantProperty","transientProperty")
      *     .build());
      * </pre>
-     *
+     * <p>
      * For simple cases, you can use {@link EntityDefinition} constructors,
      * for example:
      * <pre>
@@ -275,7 +308,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * @see <a href="http://javers.org/documentation/domain-configuration/#entity">http://javers.org/documentation/domain-configuration/#entity</a>
      * @see EntityDefinitionBuilder#entityDefinition(Class)
      */
-    public JaversBuilder registerEntity(EntityDefinition entityDefinition){
+    public JaversBuilder registerEntity(EntityDefinition entityDefinition) {
         argumentIsNotNull(entityDefinition);
         return registerType(entityDefinition);
     }
@@ -305,7 +338,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Registers a {@link ValueObjectType}. <br/>
      * Use this method if you are not willing to use {@link ValueObject} annotations.
      * <br/><br/>
-     *
+     * <p>
      * Recommended way to create {@link ValueObjectDefinition} is {@link ValueObjectDefinitionBuilder}.
      * For example:
      * <pre>
@@ -314,7 +347,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      *     .withTypeName(typeName)
      *     .build();
      * </pre>
-     *
+     * <p>
      * For simple cases, you can use {@link ValueObjectDefinition} constructors,
      * for example:
      * <pre>
@@ -334,7 +367,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Comma separated list of packages scanned by Javers in search of
      * your classes with the {@link TypeName} annotation.
      * <br/><br/>
-     *
+     * <p>
      * It's <b>important</b> to declare here all of your packages containing classes with {@literal @}TypeName,<br/>
      * because Javers needs <i>live</i> class definitions to properly deserialize Snapshots from {@link JaversRepository}.
      * <br/><br/>
@@ -350,12 +383,12 @@ public class JaversBuilder extends AbstractContainerBuilder {
      *      private String name;
      *  }
      * </pre>
-     *
+     * <p>
      * In the scenario when Javers reads a Snapshot of type named 'Person'
      * before having a chance to map the Person class definition,
      * the 'Person' type will be mapped to generic {@link UnknownType}.
      * <br/><br/>
-     *
+     * <p>
      * Since 5.8.4, Javers logs <code>WARNING</code> when UnknownType is created
      * because Snapshots with UnknownType can't be properly deserialized from {@link JaversRepository}.
      *
@@ -369,11 +402,11 @@ public class JaversBuilder extends AbstractContainerBuilder {
 
         long start = System.currentTimeMillis();
         logger.info("scanning package(s): {}", packagesToScan);
-        List<Class<?>> scan = findClasses(TypeName.class, packagesToScan.replaceAll(" ","").split(","));
-		for (Class<?> c : scan) {
-			scanTypeName(c);
-		}
-		long delta = System.currentTimeMillis() - start;
+        List<Class<?>> scan = findClasses(TypeName.class, packagesToScan.replaceAll(" ", "").split(","));
+        for (Class<?> c : scan) {
+            scanTypeName(c);
+        }
+        long delta = System.currentTimeMillis() - start;
         logger.info("  found {} ManagedClass(es) with @TypeName in {} ms", scan.size(), delta);
 
         return this;
@@ -383,16 +416,16 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Register your class with &#64;{@link TypeName} annotation
      * in order to use it in all kinds of JQL queries.
      * <br/><br/>
-     *
+     * <p>
      * You can also use {@link #withPackagesToScan(String)}
      * to scan all your classes.
      * <br/><br/>
-     *
+     * <p>
      * Technically, this method is the convenient alias for {@link Javers#getTypeMapping(Type)}
      *
      * @since 1.4
      */
-    public JaversBuilder scanTypeName(Class userType){
+    public JaversBuilder scanTypeName(Class userType) {
         classesToScan.add(userType);
         return this;
     }
@@ -400,13 +433,13 @@ public class JaversBuilder extends AbstractContainerBuilder {
     /**
      * Registers a simple value type (see {@link ValueType}).
      * <br/><br/>
-     *
+     * <p>
      * For example, values are: BigDecimal, LocalDateTime.
      * <br/><br/>
-     *
+     * <p>
      * Use this method if can't use the {@link Value} annotation.
      * <br/><br/>
-     *
+     * <p>
      * By default, Values are compared using {@link Object#equals(Object)}.
      * You can provide external <code>equals()</code> function
      * by registering a {@link CustomValueComparator}.
@@ -424,7 +457,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Registers a {@link ValueType} with a custom comparator to be used instead of
      * {@link Object#equals(Object)}.
      * <br/><br/>
-     *
+     * <p>
      * For example, by default, BigDecimals are Values
      * compared using {@link java.math.BigDecimal#equals(Object)},
      * sadly it isn't the correct mathematical equality:
@@ -432,7 +465,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * <pre>
      *     new BigDecimal("1.000").equals(new BigDecimal("1.00")) == false
      * </pre>
-     *
+     * <p>
      * If you want to compare them in the right way &mdash; ignoring trailing zeros &mdash;
      * register this comparator:
      *
@@ -458,7 +491,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
     /**
      * Lambda-style variant of {@link #registerValue(Class, CustomValueComparator)}.
      * <br/><br/>
-     *
+     * <p>
      * For example, you can register the comparator for BigDecimals with fixed equals:
      *
      * <pre>
@@ -480,7 +513,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
         return registerValue(valueClass, new CustomValueComparator<T>() {
             @Override
             public boolean equals(T a, T b) {
-                return equalsFunction.apply(a,b);
+                return equalsFunction.apply(a, b);
             }
 
             @Override
@@ -492,9 +525,9 @@ public class JaversBuilder extends AbstractContainerBuilder {
 
     /**
      * <b>Deprecated</b>, use {@link #registerValue(Class, CustomValueComparator)}.
-     *
+     * <p>
      * <br/><br/>
-     *
+     * <p>
      * Since this comparator is not aligned with {@link Object#hashCode()},
      * it calculates incorrect results when a given Value is used in hashing context
      * (when comparing Sets with Values or Maps with Values as keys).
@@ -508,7 +541,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
         return registerValue(valueClass, new CustomValueComparator<T>() {
             @Override
             public boolean equals(T a, T b) {
-                return equalsFunction.apply(a,b);
+                return equalsFunction.apply(a, b);
             }
 
             @Override
@@ -527,13 +560,13 @@ public class JaversBuilder extends AbstractContainerBuilder {
     @Deprecated
     public <T> JaversBuilder registerValueWithCustomToString(Class<T> valueClass, Function<T, String> toStringFunction) {
         Validate.argumentsAreNotNull(valueClass, toStringFunction);
-        return registerValue(valueClass, (a,b) -> Objects.equals(a,b), toStringFunction);
+        return registerValue(valueClass, (a, b) -> Objects.equals(a, b), toStringFunction);
     }
 
     /**
      * Marks given class as ignored by JaVers.
      * <br/><br/>
-     *
+     * <p>
      * Use this method as an alternative to the {@link DiffIgnore} annotation.
      *
      * @see DiffIgnore
@@ -549,7 +582,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * <br/>
      * Registers a custom strategy for marking certain classes as ignored.
      * <br/><br/>
-     *
+     * <p>
      * For example, you can ignore classes by package naming convention:
      *
      * <pre>
@@ -557,7 +590,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      *         .registerIgnoredClassesStrategy(c -&gt; c.getName().startsWith("com.ignore.me"))
      *         .build();
      * </pre>
-     *
+     * <p>
      * Use this method as the alternative to the {@link DiffIgnore} annotation
      * or multiple calls of {@link JaversBuilder#registerIgnoredClass(Class)}.
      */
@@ -570,14 +603,14 @@ public class JaversBuilder extends AbstractContainerBuilder {
     /**
      * Registers a {@link ValueType} and its custom JSON TypeAdapter.
      * <p/>
-     *
+     * <p>
      * Useful for ValueTypes when Gson's default representation isn't good enough.
      *
      * @see <a href="http://javers.org/documentation/repository-configuration/#json-type-adapters">http://javers.org/documentation/repository-configuration/#json-type-adapters</a>
      * @see JsonTypeAdapter
      */
     public JaversBuilder registerValueTypeAdapter(JsonTypeAdapter typeAdapter) {
-        for (Class c : (List<Class>)typeAdapter.getValueTypes()){
+        for (Class c : (List<Class>) typeAdapter.getValueTypes()) {
             if (!clientsClassDefinitions.containsKey(c)) {
                 registerValue(c);
             }
@@ -589,6 +622,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
 
     /**
      * Registers an advanced variant of custom JSON TypeAdapter.
+     *
      * @see JsonAdvancedTypeAdapter
      */
     public JaversBuilder registerJsonAdvancedTypeAdapter(JsonAdvancedTypeAdapter adapter) {
@@ -600,7 +634,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Registers {@link ValueType} and its custom native
      * <a href="http://code.google.com/p/google-gson/">Gson</a> adapter.
      * <br/><br/>
-     *
+     * <p>
      * Useful when you already have Gson {@link TypeAdapter}s implemented.
      *
      * @see TypeAdapter
@@ -617,16 +651,16 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Switch on when you need a type safe serialization for
      * heterogeneous collections like List, List&lt;Object&gt;.
      * <br/><br/>
-     *
+     * <p>
      * Heterogeneous collections are collections which contains items of different types
      * (or types unknown at compile time).
      * <br/><br/>
-     *
+     * <p>
      * This approach is generally discouraged, prefer statically typed collections
      * with exactly one type of items like List&lt;String&gt;.
      *
-     * @see org.javers.core.json.JsonConverterBuilder#typeSafeValues(boolean)
      * @param typeSafeValues default false
+     * @see org.javers.core.json.JsonConverterBuilder#typeSafeValues(boolean)
      */
     public JaversBuilder withTypeSafeValues(boolean typeSafeValues) {
         jsonConverterBuilder().typeSafeValues(typeSafeValues);
@@ -648,8 +682,8 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * </pre>
      * </li></ul>
      *
-     * @see GsonBuilder#setPrettyPrinting()
      * @param prettyPrint default true
+     * @see GsonBuilder#setPrettyPrinting()
      */
     public JaversBuilder withPrettyPrint(boolean prettyPrint) {
         this.coreConfigurationBuilder.withPrettyPrint(prettyPrint);
@@ -657,14 +691,14 @@ public class JaversBuilder extends AbstractContainerBuilder {
     }
 
     public JaversBuilder registerEntities(Class<?>... entityClasses) {
-        for(Class clazz : entityClasses) {
+        for (Class clazz : entityClasses) {
             registerEntity(clazz);
         }
         return this;
     }
 
     public JaversBuilder registerValueObjects(Class<?>... valueObjectClasses) {
-        for(Class clazz : valueObjectClasses) {
+        for (Class clazz : valueObjectClasses) {
             registerValueObject(clazz);
         }
         return this;
@@ -701,7 +735,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
     /**
      * The <b>Initial Changes</b> switch, enabled by default since Javers 6.0.
      * <br/><br/>
-     *
+     * <p>
      * When the switch is enabled, {@link Javers#compare(Object oldVersion, Object currentVersion)}
      * and {@link Javers#findChanges(JqlQuery)}
      * generate additional set of Initial Changes for each
@@ -709,7 +743,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * <br/>
      * Internally, Javers generates Initial Changes by comparing a virtual, empty object
      * with a real NewObject.
-     *
+     * <p>
      * <br/><br/>
      * For Primitives and Values
      * an Initial Change is modeled as {@link InitialValueChange} (subtype of {@link ValueChange})
@@ -719,18 +753,19 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * So, for example, an Initial Change for a List is a regular {@link ListChange}
      * with all elements from this list reflected as {@link ValueAdded}.
      * <br/><br/>
-     *
+     * <p>
      * In Javers Spring Boot starter you can disable Initial Value in `application.yml`:
      *
      * <pre>
      * javers:
      *   initialChanges: false
      * </pre>
+     *
      * @see NewObject
      * @see JaversBuilder#withUsePrimitiveDefaults(boolean)
      * @see JaversBuilder#withTerminalChanges(boolean) (boolean)
      */
-    public JaversBuilder withInitialChanges(boolean initialChanges){
+    public JaversBuilder withInitialChanges(boolean initialChanges) {
         configurationBuilder().withInitialChanges(initialChanges);
         return this;
     }
@@ -740,12 +775,12 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Works only if {@link #withInitialChanges(boolean)} or
      * {@link #withTerminalChanges(boolean)} is enabled.
      * <br/><br/>
-     *
+     * <p>
      * This switch affects how {@link InitialValueChange} and {@link TerminalValueChange}
      * are calculated in the situation when a primitive property with a default value
      * appears in {@link NewObject} or disappears in {@link ObjectRemoved}.
      * <br/><br/>
-     *
+     * <p>
      * When enabled, no changes are calculated if
      * a primitive property with a default value (for example 0 for int)
      * is compared to an added or removed property.
@@ -753,9 +788,9 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * When disabled, Javers calculates {@link InitialValueChange} or
      * {@link TerminalValueChange} with null on one side and a primitive default
      * value on the other side.
-     *
+     * <p>
      * <br/><br/>
-     *
+     * <p>
      * In Javers Spring Boot starter you can disable this switch in `application.yml`:
      *
      * <pre>
@@ -775,14 +810,14 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Use {@link #withInitialChanges(boolean)}
      */
     @Deprecated
-    public JaversBuilder withNewObjectsSnapshot(boolean newObjectsSnapshot){
+    public JaversBuilder withNewObjectsSnapshot(boolean newObjectsSnapshot) {
         return this.withInitialChanges(newObjectsSnapshot);
     }
 
     /**
      * The <b>Terminal Changes</b> switch, enabled by default since Javers 6.0.
      * <br/><br/>
-     *
+     * <p>
      * When the switch is enabled, {@link Javers#compare(Object oldVersion, Object currentVersion)}
      * and {@link Javers#findChanges(JqlQuery)}
      * generate additional set of Terminal Changes for each
@@ -791,7 +826,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Internally, Javers generates Terminal Changes by comparing
      * a real Removed Object with a virtual, totally empty object.
      * <br/><br/>
-     *
+     * <p>
      * In Javers Spring Boot starter you can disable Terminal Changes in `application.yml`:
      *
      * <pre>
@@ -799,12 +834,12 @@ public class JaversBuilder extends AbstractContainerBuilder {
      *   terminalChanges: false
      * </pre>
      *
-     * @since 6.0
      * @see ObjectRemoved
      * @see JaversBuilder#withUsePrimitiveDefaults(boolean)
      * @see JaversBuilder#withInitialChanges(boolean) (boolean)
+     * @since 6.0
      */
-    public JaversBuilder withTerminalChanges(boolean terminalChanges){
+    public JaversBuilder withTerminalChanges(boolean terminalChanges) {
         configurationBuilder().withTerminalChanges(terminalChanges);
         return this;
     }
@@ -824,7 +859,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Custom Types are not easy to manage, use it as a last resort,<br/>
      * only for corner cases like comparing custom Collection types.</b>
      * <br/><br/>
-     *
+     * <p>
      * In most cases, it's better to customize the Javers' diff algorithm using
      * much more simpler {@link CustomValueComparator},
      * see {@link #registerValue(Class, CustomValueComparator)}.
@@ -832,7 +867,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * @param <T> Custom Type
      * @see <a href="https://javers.org/documentation/diff-configuration/#custom-comparators">https://javers.org/documentation/diff-configuration/#custom-comparators</a>
      */
-    public <T> JaversBuilder registerCustomType(Class<T> customType, CustomPropertyComparator<T, ?> comparator){
+    public <T> JaversBuilder registerCustomType(Class<T> customType, CustomPropertyComparator<T, ?> comparator) {
         registerType(new CustomDefinition(customType, comparator));
         bindComponent(comparator, new CustomToNativeAppenderAdapter(comparator, customType));
         return this;
@@ -842,7 +877,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * @deprecated Renamed to {@link #registerCustomType(Class, CustomPropertyComparator)}
      */
     @Deprecated
-    public <T> JaversBuilder registerCustomComparator(CustomPropertyComparator<T, ?> comparator, Class<T> customType){
+    public <T> JaversBuilder registerCustomComparator(CustomPropertyComparator<T, ?> comparator, Class<T> customType) {
         return registerCustomType(customType, comparator);
     }
 
@@ -853,7 +888,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
      * Generally, we recommend using LEVENSHTEIN_DISTANCE, because it's smarter.
      * However, it can be slow for long lists, so SIMPLE is enabled by default.
      * <br/><br/>
-     *
+     * <p>
      * Refer to <a href="http://javers.org/documentation/diff-configuration/#list-algorithms">http://javers.org/documentation/diff-configuration/#list-algorithms</a>
      * for description of both algorithms
      *
@@ -865,13 +900,13 @@ public class JaversBuilder extends AbstractContainerBuilder {
         return this;
     }
 
-  /**
-   * DateProvider providers current timestamp for {@link Commit#getCommitDate()}.
-   * <br/>
-   * By default, now() is used.
-   * <br/>
-   * Overriding default dateProvider probably makes sense only in test environment.
-   */
+    /**
+     * DateProvider providers current timestamp for {@link Commit#getCommitDate()}.
+     * <br/>
+     * By default, now() is used.
+     * <br/>
+     * Overriding default dateProvider probably makes sense only in test environment.
+     */
     public JaversBuilder withDateTimeProvider(DateProvider dateProvider) {
         argumentIsNotNull(dateProvider);
         this.dateProvider = dateProvider;
@@ -926,14 +961,14 @@ public class JaversBuilder extends AbstractContainerBuilder {
     }
 
     private TypeMapperLazy typeMapperLazy() {
-        return (TypeMapperLazy)typeMapper();
+        return (TypeMapperLazy) typeMapper();
     }
 
     private CoreConfigurationBuilder configurationBuilder() {
         return this.coreConfigurationBuilder;
     }
 
-    private JsonConverterBuilder jsonConverterBuilder(){
+    private JsonConverterBuilder jsonConverterBuilder() {
         return getContainerComponent(JsonConverterBuilder.class);
     }
 
@@ -941,13 +976,13 @@ public class JaversBuilder extends AbstractContainerBuilder {
         Set<JaversType> additionalTypes = new HashSet<>();
 
         for (ConditionalTypesPlugin plugin : conditionalTypesPlugins) {
-            logger.info("loading "+plugin.getClass().getSimpleName()+" ...");
+            logger.info("loading " + plugin.getClass().getSimpleName() + " ...");
 
             plugin.beforeAssemble(this);
 
             additionalTypes.addAll(plugin.getNewTypes(typeMapperLazy()));
 
-            AddOnsModule addOnsModule = new AddOnsModule(getContainer(), (Collection)plugin.getPropertyChangeAppenders());
+            AddOnsModule addOnsModule = new AddOnsModule(getContainer(), (Collection) plugin.getPropertyChangeAppenders());
             addModule(addOnsModule);
         }
 
@@ -981,16 +1016,16 @@ public class JaversBuilder extends AbstractContainerBuilder {
         addComponent(dateProvider);
     }
 
-    private void bootRepository(){
+    private void bootRepository() {
         CoreConfiguration coreConfiguration = coreConfiguration();
-        if (repository == null){
+        if (repository == null) {
             logger.info("using fake InMemoryRepository, register actual Repository implementation via JaversBuilder.registerJaversRepository()");
             repository = new InMemoryRepository();
         }
 
-        repository.setJsonConverter( getContainerComponent(JsonConverter.class));
+        repository.setJsonConverter(getContainerComponent(JsonConverter.class));
 
-        if (repository instanceof ConfigurationAware){
+        if (repository instanceof ConfigurationAware) {
             ((ConfigurationAware) repository).setConfiguration(coreConfiguration);
         }
 
@@ -1001,7 +1036,7 @@ public class JaversBuilder extends AbstractContainerBuilder {
     }
 
     private <T extends ClientsClassDefinition> T getClassDefinition(Class<?> baseJavaClass) {
-        return (T)clientsClassDefinitions.get(baseJavaClass);
+        return (T) clientsClassDefinitions.get(baseJavaClass);
     }
 
     private CoreConfiguration coreConfiguration() {

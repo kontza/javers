@@ -13,7 +13,11 @@ import org.javers.repository.sql.JaversSqlRepository;
 import org.javers.repository.sql.SqlRepositoryBuilder;
 import org.javers.spring.RegisterJsonTypeAdaptersPlugin;
 import org.javers.spring.aot.JaversSpringNativeHints;
-import org.javers.spring.auditable.*;
+import org.javers.spring.auditable.AuthorProvider;
+import org.javers.spring.auditable.CommitPropertiesProvider;
+import org.javers.spring.auditable.EmptyPropertiesProvider;
+import org.javers.spring.auditable.MockAuthorProvider;
+import org.javers.spring.auditable.SpringSecurityAuthorProvider;
 import org.javers.spring.auditable.aspect.JaversAuditableAspect;
 import org.javers.spring.auditable.aspect.springdatajpa.JaversSpringDataJpaAuditableRepositoryAspect;
 import org.javers.spring.boot.aot.JaversSqlNativeHints;
@@ -27,10 +31,14 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration;
-import org.springframework.boot.autoconfigure.orm.jpa.JpaProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.*;
+import org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration;
+import org.springframework.boot.jpa.autoconfigure.JpaProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.EnableAspectJAutoProxy;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import java.util.ArrayList;
@@ -62,7 +70,7 @@ public class JaversSqlAutoConfiguration {
     @Bean
     public DialectName javersSqlDialectName() {
         SessionFactoryImplementor sessionFactory =
-                entityManagerFactory.unwrap(SessionFactoryImplementor.class);
+            entityManagerFactory.unwrap(SessionFactoryImplementor.class);
 
         Dialect hibernateDialect = sessionFactory.getJdbcServices().getDialect();
         logger.info("detected Hibernate dialect: " + hibernateDialect.getClass().getSimpleName());
@@ -74,20 +82,20 @@ public class JaversSqlAutoConfiguration {
     @ConditionalOnMissingBean
     public JaversSqlRepository javersSqlRepository(ConnectionProvider connectionProvider) {
         return SqlRepositoryBuilder
-                .sqlRepository()
-                .withSchema(javersSqlProperties.getSqlSchema())
-                .withConnectionProvider(connectionProvider)
-                .withDialect(javersSqlDialectName())
-                .withSchemaManagementEnabled(javersSqlProperties.isSqlSchemaManagementEnabled())
-                .withGlobalIdCacheDisabled(javersSqlProperties.isSqlGlobalIdCacheDisabled())
-                .withGlobalIdTableName(javersSqlProperties.getSqlGlobalIdTableName())
-                .withCommitTableName(javersSqlProperties.getSqlCommitTableName())
-                .withSnapshotTableName(javersSqlProperties.getSqlSnapshotTableName())
-                .withCommitPropertyTableName(javersSqlProperties.getSqlCommitPropertyTableName())
-                .withGlobalIdSequenceName(javersSqlProperties.getSqlGlobalIdSequenceName())
-                .withCommitSequenceName(javersSqlProperties.getSqlCommitSequenceName())
-                .withSnapshotSequenceName(javersSqlProperties.getSqlSnapshotSequenceName())
-                .build();
+            .sqlRepository()
+            .withSchema(javersSqlProperties.getSqlSchema())
+            .withConnectionProvider(connectionProvider)
+            .withDialect(javersSqlDialectName())
+            .withSchemaManagementEnabled(javersSqlProperties.isSqlSchemaManagementEnabled())
+            .withGlobalIdCacheDisabled(javersSqlProperties.isSqlGlobalIdCacheDisabled())
+            .withGlobalIdTableName(javersSqlProperties.getSqlGlobalIdTableName())
+            .withCommitTableName(javersSqlProperties.getSqlCommitTableName())
+            .withSnapshotTableName(javersSqlProperties.getSqlSnapshotTableName())
+            .withCommitPropertyTableName(javersSqlProperties.getSqlCommitPropertyTableName())
+            .withGlobalIdSequenceName(javersSqlProperties.getSqlGlobalIdSequenceName())
+            .withCommitSequenceName(javersSqlProperties.getSqlCommitSequenceName())
+            .withSnapshotSequenceName(javersSqlProperties.getSqlSnapshotSequenceName())
+            .build();
     }
 
     @Bean(name = "JaversFromStarter")
@@ -95,11 +103,11 @@ public class JaversSqlAutoConfiguration {
     public Javers javers(JaversSqlRepository sqlRepository,
                          PlatformTransactionManager transactionManager) {
         JaversBuilder javersBuilder = TransactionalJpaJaversBuilder
-                .javers()
-                .withTxManager(transactionManager)
-                .registerJaversRepository(sqlRepository)
-                .withObjectAccessHook(javersSqlProperties.createObjectAccessHookInstance())
-                .withProperties(javersSqlProperties);
+            .javers()
+            .withTxManager(transactionManager)
+            .registerJaversRepository(sqlRepository)
+            .withObjectAccessHook(javersSqlProperties.createObjectAccessHookInstance())
+            .withProperties(javersSqlProperties);
 
         plugins.forEach(plugin -> plugin.beforeAssemble(javersBuilder));
 
@@ -143,9 +151,9 @@ public class JaversSqlAutoConfiguration {
     @Bean
     @ConditionalOnProperty(name = "javers.springDataAuditableRepositoryAspectEnabled", havingValue = "true", matchIfMissing = true)
     public JaversSpringDataJpaAuditableRepositoryAspect javersSpringDataAuditableAspect(
-            Javers javers,
-            AuthorProvider authorProvider,
-            CommitPropertiesProvider commitPropertiesProvider
+        Javers javers,
+        AuthorProvider authorProvider,
+        CommitPropertiesProvider commitPropertiesProvider
     ) {
         return new JaversSpringDataJpaAuditableRepositoryAspect(javers, authorProvider, commitPropertiesProvider);
     }

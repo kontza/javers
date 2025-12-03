@@ -25,8 +25,8 @@ dependencies {
     testImplementation "org.spockframework:spock-spring:$spockVersion"
 
     testImplementation "com.google.guava:guava:$guavaVersion"
-    testImplementation "org.testcontainers:spock:$testcontainers"
-    testImplementation "org.testcontainers:mongodb:$testcontainers"
+    testImplementation "org.testcontainers:testcontainers-spock:$testcontainers"
+    testImplementation "org.testcontainers:testcontainers-mongodb:$testcontainers"
 }
 
 task testJar(type: Jar) {
