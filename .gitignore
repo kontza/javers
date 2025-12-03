@@ -21,5 +21,4 @@ bin
 
 # mac os x
 .DS_Store
-
-/libs/javers-8.0.0.tar
+javers-8.0.0.tar
