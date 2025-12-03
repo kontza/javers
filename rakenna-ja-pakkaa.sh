@@ -1,3 +1,5 @@
+rm -rf ~/.m2/repository/org/javers/
+./gradlew createRelease -x test
 ./gradlew publishToMavenLocal -x test
 pushd "$HOME/.m2/repository" || return
 tar cfv javers-8.tar org/javers
